@@ -1,0 +1,29 @@
+execDir: '/DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/pipeline/'
+logDir: '/DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/mutect/logs'  # no terminal slash
+
+queue: 'xlong.q'
+numJobs: 50
+
+part1:
+  caller: 'mutect'  # mutect or mutect2
+  sampleFile: '/DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/mutect/files.txt'  # list of vcf files to analyze (just the base name, no path or extension)
+  inDir: '/DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/orig/mutect/'
+  outDir: '/DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/mutect/'
+  annoExecDir: '/DCEG/CGF/Bioinformatics/Production/Bari/variant_annotation_scripts'  # no terminal slash
+part2:
+  inFile: '/DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/mutect/filtered/somatic_filtered.vcf'
+  outDir: '/DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/mutect/analyze_all_samples/'
+  myRef: 'hs37d5' # or 'hg19'
+  phenoFile: '/DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/eagle.pheno.149lungsamples'  # space delimited
+  subjectCol: 'Collaborator_Sample_ID'
+  phenoCol: 'Collection'
+  groups: 
+      - Neuroendocrine
+      - Squamous
+part3:
+  inDir: '/DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/mutect/analyze_all_combine_types/summed_matrices/'
+  numSigs: 3
+
+
+
+# TODO: slash management

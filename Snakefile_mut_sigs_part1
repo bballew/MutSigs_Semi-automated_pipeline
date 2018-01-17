@@ -1,0 +1,508 @@
+#!/usr/bin/env python3
+
+import os
+
+# conf=/DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/mutect/config.yaml snakemake -s /DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/pipeline/Snakefile_mut_sigs
+# conf=/DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/mutect2/config.yaml snakemake -s /DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/pipeline/Snakefile_mut_sigs --cluster "qsub -V -o /DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/mutect2 -j y" --jobs 50 --latency-wait 300
+conf = os.environ.get("conf")
+configfile: conf
+caller = config['part1']['caller']
+inDir = config['part1']['inDir']
+execDir = config['execDir']
+outDir = config['part1']['outDir']
+annoExecDir = config['part1']['annoExecDir']
+
+with open(config['part1']['sampleFile']) as f:
+    SAMPLES = f.read().splitlines()
+
+rule all:
+    input:
+        outDir + 'summary_data/chrom_counts.png',
+        outDir + 'summary_data/subject_counts.png',
+        outDir + 'summary_data/filtered_var_counts.png',
+        outDir + 'summary_data/stats.txt'
+
+################# Basic input organization and QC #################
+
+rule gzip_input_vcfs:
+    '''
+    Start with all VCFs gzipped.  Ok if not bgzipped (or if mixed)
+    because I just want to use bash utilities for now (e.g. zgrep);
+    later, they will get unzipped and re-bgzipped/indexed.
+    '''
+    input:
+        inDir + '{samples}.vcf'
+    output:
+        inDir + '{samples}.vcf.gz'
+    shell:
+        'gzip {input}'
+
+rule strip_headers:
+    '''
+    Strip headers and output a temporary file that contains all
+    variant occurences in an easy-to-count format.
+    '''
+    input:
+        expand(inDir + '{samples}.vcf.gz', samples=SAMPLES)
+    output:
+        temp(outDir + 'samples.nohead')
+    shell:
+        'zgrep -v \"^#\" {input} > {output}'
+
+rule count_per_chrom:
+    '''
+    Generate per-chromosome variant counts for each VCF.  The
+    output text file has a count for each chrom in each subject.
+    '''
+    input:
+        outDir + 'samples.nohead'
+    output:
+        outDir + 'summary_data/chrom_counts.txt'
+    shell:
+        'cut -f1 {input} | sed \"s/.vcf.gz:/ /\" | sed \"s/.*\///\" | sort | uniq -c > {output}'
+
+rule count_per_subject:
+    '''
+    Generate per-subject variant counts (one per VCF).
+    '''
+    input:
+        expand(inDir + '{samples}.vcf.gz', samples=SAMPLES)
+    output:
+        outDir + 'summary_data/subject_counts.txt'
+    shell:
+        'zgrep -vc \"^#\" {input} | sed \"s/.vcf.gz:/ /\" | sed \"s/.*\///\" >> {output}'
+
+rule plot_chrom_counts:
+    '''
+    Plot the data from the rule count_per_chrom as counts
+    per chromosome aggregated across all subjects.
+    '''
+    input:
+        outDir + 'summary_data/chrom_counts.txt'
+    output:
+        outDir + 'summary_data/chrom_counts.png'
+    run:
+        import matplotlib
+        matplotlib.use('Agg')
+        import pandas as pd
+        import numpy as np
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+
+        # read in data
+        data = pd.read_table(input[0], sep='\s+', header=None, names=["Count", "Sample", "Chrom"])
+        df = pd.DataFrame(data)
+
+        # remove non-canonical chromosomes
+        df = df[(df['Chrom'] <= "99") | (df['Chrom'] == "Y") | (df['Chrom'] == "X")]
+
+        # reshape data
+        df = df.pivot(index='Sample', columns='Chrom', values='Count')
+
+        # plot data
+        sns.set_style("white")
+        fig, ax = plt.subplots(figsize=(20, 10))
+        flierprops = dict(marker='o', markerfacecolor='green', markersize=4, linestyle='none')
+        df.boxplot(grid=False, showmeans=True, notch=True, flierprops=flierprops)
+        ax.set_ylabel('# variants')
+        ax.set_xlabel('Chromosome')
+        ax.set_title('Distribution of somatic variants per chromosome for each VCF')
+        plt.savefig(output[0])
+
+rule plot_subject_counts:
+    '''
+    Plot the data from rule count_per_subject.
+    '''
+    input:
+        outDir + 'summary_data/subject_counts.txt'
+    output:
+        outDir + 'summary_data/subject_counts.png'
+    run:
+        import matplotlib
+        matplotlib.use('Agg')
+        import pandas as pd
+        import numpy as np
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+
+        # read in data
+        data = pd.read_table(input[0], sep='\s+', header=None, names=["Sample", "Count"])
+        df = pd.DataFrame(data)
+
+        # sort data
+        df.sort_values(by='Count', ascending=False, inplace=True)
+
+        # plot data
+        left = np.arange(len(df.Sample))
+        height = df.Count
+        width = 0.5
+        sns.set_style("white")
+        fig, ax = plt.subplots(figsize=(20, 10))
+        rects = ax.bar(left, height, width)
+        ax.set_ylabel('# variants')
+        ax.set_xlabel('Samples')
+        ax.set_title('Somatic variant counts per subject')
+        #ax.set_xticks(left + width / 2)
+        ax.set_xticklabels((df.Sample))
+        plt.xticks(rotation=70)
+        plt.savefig(output[0])
+
+################# Prep data #################
+
+rule remove_germline_columns:
+    '''
+    MuTect outputs the tumor and normal genotype columns in
+    inconsistent order (e.g. tumor is not always first), but
+    labeled with the sample ID.  
+
+    Unlike MuTect, MuTect2 is consistent in tumor/normal column
+    order, but replaces sample names with the generic "TUMOR" and
+    "NORMAL".  
+
+    This rule will, for MuTect, call a script that identifies
+    the tumor column and removes the germline column.  For
+    MuTect2, this rule calls a script that gets rid of the
+    normal column and renames it with the sample ID.  For either
+    caller, the output should be VCFs with a single genotype
+    column representing the tumor sample, with the sample ID
+    in the header.
+    '''
+    input:
+        inDir + '{samples}.vcf.gz',
+    output:
+        outDir + 'somatic_cols_only/{samples}.out'
+    params:
+        path = execDir + 'scripts/',
+        out = outDir + 'somatic_cols_only/'
+    run:
+        if caller == 'mutect':
+            shell('{params.path}cut_vcfs.sh {input} {params.out}')
+        elif caller == 'mutect2':
+            shell('module load bcftools; {params.path}rename_tumor_sample.sh {input} {params.out}')
+
+rule bgzip_single_col_vcfs:
+    '''
+    bgzip the VCFs produced above.
+    '''
+    input:
+        outDir + 'somatic_cols_only/{samples}.out'
+    output:
+        outDir + 'somatic_cols_only/{samples}.out.gz',
+        outDir + 'somatic_cols_only/{samples}.out.gz.tbi'
+    shell:
+        'module load tabix;'
+        'bgzip {input}; tabix -p vcf {input}.gz'
+
+if caller == 'mutect2':
+    rule remove_QSS:
+        '''
+        In MuTect2 VCFs, the QSS field causes the following error
+        when bcftools merge is used:
+
+            Incorrect number of QSS fields (2) at 1:10611, cannot merge.
+
+        To solve, I am simply removing the QSS fields with this rule.
+        '''
+        input:
+            outDir + 'somatic_cols_only/{samples}.out.gz',
+            outDir + 'somatic_cols_only/{samples}.out.gz.tbi'
+        output:
+            outDir + 'somatic_cols_only/{samples}.noQSS'
+        shell:
+            'module load bcftools;'
+            'bcftools annotate -x FORMAT/QSS {input[0]} > {output};'
+
+if caller == 'mutect2':
+    rule bgzip_noQSS:
+        '''
+        zip the VCFs generated by the rule above.
+        '''
+        input:
+            outDir + 'somatic_cols_only/{samples}.noQSS'
+        output:
+            outDir + 'somatic_cols_only/{samples}.noQSS.gz',
+            outDir + 'somatic_cols_only/{samples}.noQSS.gz.tbi'
+        shell:
+            'module load tabix;'
+            'bgzip {input}; tabix -p vcf {output[0]}'
+
+################# Merge VCFs #################
+
+rule merge_vcfs:
+    '''
+    Merge the individual-level VCFs into a single multi-
+    sample VCF.
+    '''
+    input:
+        expand(outDir + 'somatic_cols_only/{samples}.noQSS.gz', samples=SAMPLES) if caller == 'mutect2' else expand(outDir + 'somatic_cols_only/{samples}.out.gz', samples=SAMPLES)
+    output:
+        outDir + 'merged_vcf/all_somatic.vcf'
+    shell:
+        'module load bcftools;'
+        'bcftools merge -O v -m none {input} > {output}'
+
+if caller == 'mutect2':
+    rule fix_format_header:
+        '''
+        Fix for a MuTect2 FORMAT header issue when using bcftools
+        (see https://gatkforums.broadinstitute.org/gatk/discussion/4552/error-
+        stack-trace-error-message-for-input-string-r)
+        '''
+        input:
+            outDir + 'merged_vcf/all_somatic.vcf'
+        output:
+            outDir + 'merged_vcf/all_somatic.Rfix.vcf'
+        shell:
+            'sed \"0,/##FORMAT=<ID=AD,Number=R/{{s/##FORMAT=<ID=AD,Number=R/##FORMAT=<ID=AD,Number=./}}\" {input} > {output}'
+
+rule clean_up_GL_contigs:
+    '''
+    Remove non-canonical chromosomes.
+    '''
+    input:
+        outDir + 'merged_vcf/all_somatic.vcf' if caller == 'mutect' else outDir + 'merged_vcf/all_somatic.Rfix.vcf'
+    output:
+        outDir + 'merged_vcf/all_somatic_clean.vcf'
+    shell:
+        'grep -v \"^GL00*\" {input} > {output}'
+
+################# Annotate VCF #################
+
+rule run_annotation_tool:
+    '''
+    Does NOT generates the run script to start off Mingyi's annotation
+    pipeline.  Instead, sets the environment and kicks off
+    annotate_variants_divide_and_conquer_no_merge.sh within the snakefile.
+    This is an edited version of the original divide_and_conquer script with
+    the merge_vcfs.sh qsub section commented out.  Then, the merge_vcfs.sh
+    routine is run here, so that snakemake will track this job to
+    completion (as this script is the one that monitors subjob completion
+    and harmonizes all parts at the end).
+
+    NOTE - you still have to have configured the annotation_config.rc file on your own!
+    E.g.:
+        DIVIDE_AND_CONQUER_CHUNK_SIZE=10000
+        TMP_DIR=/ttemp/ann
+        QUEUE=seq*.q
+        KEEP_INTERMEDIATE_RESULTS=NO (You may change it as “YES” to trace the errors in annotation processing)
+        QUEUE=seq-calling*.q,seq-gvcf.q
+
+    NOTE - snakemake --cluster defaults to csh - make sure to set it to sh via -S /bin/sh or the exported environment variable here will cause a problem.
+    '''
+    input:
+        outDir + 'merged_vcf/all_somatic_clean.vcf'
+    output:
+        outDir + 'annotation_logs/annotation_tool.out'
+    params:
+        logDir = outDir + 'annotation_logs',
+        annoDir = annoExecDir
+    run:
+        os.environ['ANNOTATION_SCRIPT_DIR'] = params.annoDir  # This is how you export an environment variable with python.  Can't use shell('export var=text') because python doesn't source .bashrc and therefore doesn't know "export".
+        shell('sleep 30; {params.annoDir}/annotate_variants_divide_and_conquer_no_merge.sh {input} {params.logDir} > {output}')
+
+rule get_file_names:
+    '''
+    The annotation tool generates file names that are uniquely
+    identifiable via the date/time and an additional four digits.
+    This step retrieves the file names from the annotation tool
+    stdout, which is being redirected to the log annotation_tool.out.
+    '''
+    input:
+        outDir + 'annotation_logs/annotation_tool.out'
+    output:
+        outDir + 'annotation_logs/file.list'
+    shell:
+        'grep -Eo \"all_somatic_clean_[0-9]+\.[0-9]+\" {input} | sort | uniq > {output}'
+
+rule merge_annotation_files:
+    '''
+    Once the annotation is done on each file (representing
+    part of the original VCF), this rule merges the data back
+    together.
+    '''
+    input:
+        outDir + 'annotation_logs/file.list'
+    output:
+        outDir + 'merged_vcf/annotated_somatic_clean.vcf'
+    params:
+        annoDir = annoExecDir,
+        logDir = outDir + 'annotation_logs'
+    run:
+        os.environ['ANNOTATION_SCRIPT_DIR'] = params.annoDir
+        shell('{params.annoDir}/merge_vcfs_bb.sh {input} {output} {params.logDir}')
+
+################# Filter data #################
+
+rule filter_variants:
+    '''
+    Removes any variant that appears in dbSNP, 1kG, ESP, or ExAC.
+    '''
+    input:
+        outDir + 'merged_vcf/annotated_somatic_clean.vcf'
+    output:
+        outDir + 'filtered/somatic_filtered.vcf'
+    params:
+        path = execDir + 'scripts/'
+    shell:
+        'bash {params.path}filter_vars.sh {input} > {output}'
+
+rule flag_samples_for_filtering:
+    '''
+    Generates post-filtering count of variants per subject, to be reviewed
+    for potential exclusion.
+    '''
+    input:
+        outDir + 'filtered/somatic_filtered.vcf'
+    output:
+        outDir + 'summary_data/filtered_var_counts.txt'
+    params:
+        path = execDir + 'scripts/'
+    shell:
+        'module load python3;'
+        'python {params.path}vars_per_sample.py {input} {output}'
+
+rule separate_indels:
+    '''
+    Note that this file should contain 0 variants if caller==mutect.
+    '''
+    input:
+        outDir + 'filtered/somatic_filtered.vcf'
+    output:
+        outDir + 'filtered/somatic_filtered_indels.recode.vcf'
+    params:
+        prefix = outDir + 'filtered/somatic_filtered_indels'
+    shell:
+        'module load vcftools;'
+        'vcftools --vcf {input} --out {params.prefix} --keep-only-indels --recode --recode-INFO-all'
+
+rule separate_SNVs:
+    '''
+    Note that this file should contain all variants if caller==mutect.
+    '''
+    input:
+        outDir + 'filtered/somatic_filtered.vcf'
+    output:
+        outDir + 'filtered/somatic_filtered_SNVs.recode.vcf'
+    params:
+        prefix = outDir + 'filtered/somatic_filtered_SNVs'
+    shell:
+        'module load vcftools;'
+        'vcftools --vcf {input} --out {params.prefix} --remove-indels --recode --recode-INFO-all'
+
+STRANDS = ['pos', 'neg']
+
+rule separate_strands:
+    '''
+    detect transcriptional strand bias
+    will need a chr and non-chr version of this?  does bedtools care?
+
+    From Alexandrov et al,  Nature 2013
+    "Signatures of mutational processes in human cancer"
+
+    We re-extracted substitution mutational signatures incorporating the
+    transcriptional strand on which each mutation has taken place. Since a
+    mutation in a transcribed genomic region may be either on the transcribed
+    or the untranscribed strand, this generates a classification with 192
+    mutation subclasses. ... Strand bias catalogs were derived for each sample
+    using only substitutions identified in the transcribed regions of
+    well-annotated protein coding genes. Genomic regions of bidirectional
+    transcription were excluded from the strand bias analysis.
+    '''
+    input:
+        bed = execDir + 'genes_and_strand_info_from_ucsc/hg19_{strand}_strand_no_chr.bed',
+        vcf = outDir + 'filtered/somatic_filtered_SNVs.recode.vcf'
+    output:
+        outDir + 'filtered/{strand}_somatic_filtered_SNVs.recode.vcf'
+    shell:
+        'module load bedtools;'
+        'bedtools intersect -a {input.vcf} -b {input.bed} -wa > {output}'
+
+rule plot_post_filtering_subject_counts:
+    '''
+    Plots the post-filtered variant count per subject, and makes the bar
+    red if count is below 1000.  **10000 for testing!
+
+    Change to log scale?
+    '''
+    input:
+        outDir + 'summary_data/filtered_var_counts.txt'
+    output:
+        outDir + 'summary_data/filtered_var_counts.png'
+    run:
+        import matplotlib
+        matplotlib.use('Agg')
+        import pandas as pd
+        import numpy as np
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+
+        # read in data
+        data = pd.read_table(input[0], sep='\s+', header=None, names=["Sample", "Count"])
+        df = pd.DataFrame(data)
+
+        # sort data
+        df.sort_values(by='Count', ascending=False, inplace=True)
+
+        # change colors for any samples below 1000 variants
+        colors = []
+        for index, row in df.iterrows():
+            if row["Count"] > 10000:
+                colors.append('xkcd:medium blue')
+            else:
+                colors.append('xkcd:wine')
+
+        # plot data
+        left = np.arange(len(df.Sample))
+        height = df.Count
+        width = 0.5
+        sns.set_style("white")
+        fig, ax = plt.subplots(figsize=(20, 10))
+        rects = ax.bar(left, height, width, color=colors)
+        ax.set_ylabel('# variants')
+        ax.set_xlabel('Samples')
+        ax.set_title('Post-filtering somatic variant counts per subject')
+        #ax.set_xticks(left + width / 2)
+        ax.set_xticklabels((df.Sample))
+        plt.xticks(rotation=70)
+        plt.savefig(output[0])
+
+################# Generate summary #################
+
+rule summarize_data_metrics:
+    input:
+        i1 = outDir + 'merged_vcf/all_somatic.vcf',
+        i2 = outDir + 'merged_vcf/all_somatic_clean.vcf',
+        i3 = outDir + 'merged_vcf/annotated_somatic_clean.vcf',
+        i4 = outDir + 'filtered/somatic_filtered.vcf',
+        i5 = outDir + 'filtered/somatic_filtered_SNVs.recode.vcf',
+        i6 = outDir + 'filtered/somatic_filtered_indels.recode.vcf',
+        i7 = expand(outDir + 'filtered/{strand}_somatic_filtered_SNVs.recode.vcf', strand=STRANDS)
+    output:
+        outDir + 'summary_data/stats.txt'
+    params:
+        outDir + 'summary_data/subject_counts.txt'
+    shell:
+        'module load bcftools;'
+        'echo \"# Total variant occurences across all samples:\" >> {output};'
+        'awk \"{{s+=\$2}}END{{print s}}\" {params} >> {output};'
+        'echo \"# Line counts:\" >> {output};'
+        'wc -l {input} >> {output};'
+        'echo \"# Variant counts:\" >> {output};'
+        'grep -cv \"^#\" {input} >> {output};'
+        'echo \"# Stats for annotated_somatic_clean.vcf:\" >> {output};'
+        'bcftools stats {input.i3} | grep \"^SN\" >> {output};'
+        'echo \"# Stats for somatic_filtered.vcf:\" >> {output};'
+        'bcftools stats {input.i4} | grep \"^SN\" >> {output}'
+
+
+###############################################################################
+# at this point, you need to review the data and decide which samples you're
+# going forward with (removing any for <1000 vars?  removing duplicate tumor
+# samples from the same subject?)
+###############################################################################
+
+# get column numbers to cut: grep -m1 "^#CHROM" filtered_w_headers.vcf | tr "\t" "\n" | grep -nFf ../../random_sample_per_subject.txt | grep -Eo "^[0-9]+" | tr -s '\n' | tr '\n' ',' 
+# cut, then clean: module load perl  #5.18; perl VCFCleanGenotypes.pl one_per_subject.filtered_w_headers.vcf
+# remove indels from mutect2? vcftools --vcf one_per_subject.filtered_w_headers2.clean.vcf --remove-indels --recode --recode-INFO-all --out one_per_subject.filtered_w_headers2.clean.no_indels
+
+

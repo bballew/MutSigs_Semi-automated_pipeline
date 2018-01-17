@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+
+import os
+import glob
+
+# conf=/DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/mutect/config.yaml snakemake -s /DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/pipeline/Snakefile_mut_sigs
+# conf=/DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/mutect2/config.yaml snakemake -s /DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/pipeline/Snakefile_mut_sigs --cluster "qsub -V -o /DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/mutect2 -j y" --jobs 50 --latency-wait 300
+
+# conf=/DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/pipeline/config.yaml snakemake -s /DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/pipeline/Snakefile_mut_sigs_part2 --cluster "qsub -V -o /DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/mutect/analyze_all_combine_types -j y -S /bin/bash" --jobs 50 --latency-wait 300 &> /DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/mutect/analyze_all_combine_types/snake.out
+
+
+conf = os.environ.get("conf")
+configfile: conf
+execDir = config['execDir']
+outDir = config['part2']['outDir']
+caller = config['part1']['caller']
+inFile = config['part2']['inFile']
+phenoFile = config['part2']['phenoFile']
+GROUPS = config['part2']['groups']
+
+# NOTE: need an option to specify whether there's "chr" or not
+CHROMS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', 'X', 'Y']#, 'MT']
+    ### NOTE: MT is extremely sparse.  Throw out?  if not, will need to modify mutSigsDataPrep.r, as it removes samples that have no data, and some samples will have no data for MT.  this makes non-conformable arrays.
+
+rule all:
+    input:
+        expand(outDir + 'summed_matrices_matlab/{group}_mm_summed', group=GROUPS),
+        outDir + 'summed_matrices_matlab/total_mm_summed',
+        expand(outDir + 'SomaticSigs_out/{group}_pca_scree.png', group=GROUPS),
+        outDir + 'SomaticSigs_out/total_pca_scree.png'
+
+rule bgzip_input:
+    input:
+        inFile
+    output:
+        inFile + '.gz',
+        inFile + '.gz.tbi'
+    shell:
+        'module load tabix;'
+        'bgzip {input}; tabix -p vcf {input}.gz'
+
+rule split_VCF_by_chrom:
+    input:
+        i = inFile + '.gz',
+        index = inFile + '.gz.tbi'
+    output:
+        outDir + 'vcf_parts/{chrom}.vcf'
+    params:
+        chr = '{chrom}'
+    shell:
+        'module load tabix;'
+        'tabix -h {input.i} {params.chr} > {output}'
+
+# keep this, or just pass all as command line variables?
+rule generate_R_config:
+    input:
+        phenoFile
+    output:
+        outDir + 'matrix_parts/mutSigsConfig.r'
+    params:
+        ref = config['part2']['myRef'],
+        p = phenoFile,
+        sCol = config['part2']['subjectCol'],
+        pCol = config['part2']['phenoCol']
+    shell:
+        'echo -e myRef=\\"{params.ref}\\" > {output};'
+        'echo -e phenoFile=\\"{params.p}\\" >> {output};'
+        'echo -e subjectCol=\\"{params.sCol}\\" >> {output};'
+        'echo -e phenoCol=\\"{params.pCol}\\" >> {output};'
+        'echo -e \"groups=c(\"\\"{GROUPS}\\"\")\" | sed \"s/ /\\", \\"/g\" >> {output}'
+
+# clean up print statements in the r script
+rule convert_to_matrices:
+    input:
+        i = outDir + 'vcf_parts/{chrom}.vcf',
+        c = outDir + 'matrix_parts/mutSigsConfig.r'
+    output:
+        o = outDir + 'matrix_parts/{group}_mm_{chrom}'
+    params:
+        path = execDir + 'VCF_to_matrix_scripts/',
+        outPath = outDir + 'matrix_parts/'
+    shell:
+        'module load gcc/4.8.4 R/3.4.0;'
+        'Rscript {params.path}mutSigsDataPrep2.r {input.i} {params.outPath}'
+
+rule sum_matrices_by_group:
+    input:
+        expand(outDir + 'matrix_parts/{{group}}_mm_{chrom}', chrom=CHROMS)
+    output:
+        outDir + 'summed_matrices/{group}_mm_summed'
+    params:
+        path = execDir + 'VCF_to_matrix_scripts/',
+        inPath = outDir + 'matrix_parts/',
+        outPath = outDir + 'summed_matrices/'
+    shell:
+        'module load gcc/4.8.4 R/3.4.0;'
+        'Rscript {params.path}mutSigsSumMatrices.r {params.inPath} {params.outPath}'
+
+rule prefix_subject_IDs:
+    '''
+    Note that I'm running this snakemake file on the cluster with -S /bin/sh.
+    Process substitution is not specified by POSIX, so I can't use
+        cat <(cmd1) <(cmd2)
+    I could put it in a script and run like this: bash script.sh
+    I could use -S /bin/bash, but that seems to mess up other steps.
+    Or I could write out long-hand the standard way to tell cut to read data
+    from stdin, which is what I've done below.
+    '''
+    input:
+        outDir + 'summed_matrices/{group}_mm_summed'
+    output:
+        temp(outDir + 'summed_matrices/{group}_mm_summed_prefix')
+    shell:
+        # 'cat <(head -n1 {input} | sed \"s/[^ ]*/\\"{wildcards.group}_&/g\" | sed \"s/_\\"/_/g\") <(tail -n +2 {input}) > {output}'
+        '{{ head -n1 {input} | sed \"s/[^ ]*/\\"{wildcards.group}_&/g\" | sed \"s/_\\"/_/g\" 4<&- | {{ tail -n +2 {input} 3<&- | cat /dev/fd/3 -; }} 3<&0 <&4 4<&-; }} 4<&0 > {output}'
+
+rule sum_matrices_total:
+    input:
+        expand(outDir + 'summed_matrices/{group}_mm_summed_prefix', group=GROUPS)
+    output:
+        outDir + 'summed_matrices/total_mm_summed'
+    shell:
+        "paste -d' ' {input} | sed '2,$s/ \".*\" / /g' > {output}"
+
+rule convert_to_matlab_format:
+    input:
+        outDir + 'summed_matrices/{group}_mm_summed'#,
+        #outDir + 'summed_matrices/total_mm_summed'
+    output:
+        outDir + 'summed_matrices_matlab/{group}_mm_summed'
+    shell:
+        "awk '{{FS=OFS=\"\"}}NR>1{{out=$5\"[\"$2\">\"$3\"]\"$7; for(i=9;i<=NF;i++) {{out=out$i}}; print out}}' {input} | sort | cut -d' ' -f2- > {output}"
+
+rule run_SomaticSigs_over_range:
+    input:
+        outDir + 'summed_matrices/{group}_mm_summed'
+    output:
+        outDir + 'SomaticSigs_out/{group}_pca_scree.png'
+    params:
+        path = execDir + 'scripts/'
+    shell:
+        'module load gcc/4.8.4 R/3.4.0;'
+        'Rscript {params.path}runSomaticSigsRange.r {input} {output}'

@@ -19,5 +19,7 @@ fi
 source /etc/profile.d/modules.sh
 module load python3/3.5.1 sge
 
+DATE=$(date +"%Y%m%d%H%M")
+
 unset module  # this allows me to use -V in the qsub job below without getting the annoying bash_func_module errors in the output logs
-conf=$configFile snakemake -s $execDir"Snakefile_mut_sigs_part1" --cluster "qsub -V -S /bin/sh -q $queue -o $logDir -j y" --jobs $numJobs --latency-wait 300 &> $logDir"/Snakefile_mut_sigs_part1.out"
+conf=$configFile snakemake -s $execDir"Snakefile_mut_sigs_part1" --cluster "qsub -V -S /bin/sh -q $queue -o $logDir -j y" --jobs $numJobs --latency-wait 300 &> $logDir"/Snakefile_mut_sigs_part1."$DATE".out"

@@ -415,7 +415,7 @@ rule separate_strands:
         outDir + 'filtered/{strand}_somatic_filtered_SNVs.recode.vcf'
     shell:
         'module load bedtools;'
-        'bedtools intersect -a {input.vcf} -b {input.bed} -wa > {output}'
+        'bedtools intersect -a {input.vcf} -b {input.bed} -header -wa > {output}'
 
 rule plot_post_filtering_subject_counts:
     '''

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 
 import os
-import glob
+import subprocess
 
-# conf=/DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/mutect/config.yaml snakemake -s /DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/pipeline/Snakefile_mut_sigs
-# conf=/DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/mutect2/config.yaml snakemake -s /DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/pipeline/Snakefile_mut_sigs --cluster "qsub -V -o /DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/mutect2 -j y" --jobs 50 --latency-wait 300
+# conf=/DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/mutect/config.yaml snakemake -s /DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/pipeline/Snakefile_mut_sigs_part2
+# conf=/DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/mutect2/config.yaml snakemake -s /DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/pipeline/Snakefile_mut_sigs_part2 --cluster "qsub -V -o /DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/mutect2 -j y" --jobs 50 --latency-wait 300
 
 # conf=/DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/pipeline/config.yaml snakemake -s /DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/pipeline/Snakefile_mut_sigs_part2 --cluster "qsub -V -o /DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/mutect/analyze_all_combine_types -j y -S /bin/bash" --jobs 50 --latency-wait 300 &> /DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/mutect/analyze_all_combine_types/snake.out
 
@@ -13,38 +13,154 @@ conf = os.environ.get("conf")
 configfile: conf
 execDir = config['execDir']
 outDir = config['part2']['outDir']
-caller = config['part1']['caller']
+#caller = config['part1']['caller']
 inFile = config['part2']['inFile']
 phenoFile = config['part2']['phenoFile']
+refGenome = config['refGenome']
 GROUPS = config['part2']['groups']
 
-# NOTE: need an option to specify whether there's "chr" or not
-CHROMS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', 'X', 'Y']#, 'MT']
-    ### NOTE: MT is extremely sparse.  Throw out?  if not, will need to modify mutSigsDataPrep.r, as it removes samples that have no data, and some samples will have no data for MT.  this makes non-conformable arrays.
+inFileNoExt = os.path.splitext(inFile)[0]
+
+if refGenome == 'hs37d5':
+    CHROMS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', 'X', 'Y']#, 'MT']
+elif refGenome == 'hg19':
+    CHROMS = ['chr1', 'chr2', 'chr3', 'chr4', 'chr5', 'chr6', 'chr7', 'chr8', 'chr9', 'chr10', 'chr11', 'chr12', 'chr13', 'chr14', 'chr15', 'chr16', 'chr17', 'chr18', 'chr19', 'chr20', 'chr21', 'chr22', 'chrX', 'chrY']#, 'MT']
+### NOTE: MT is extremely sparse.  Throw out?
+
+SAMPLES = subprocess.getoutput('. /etc/profile.d/modules.sh; module load bcftools; bcftools query -l ' + inFile).split()
+
+STRANDS = ['pos', 'neg']
+TRANSCRIBED = ['transcribed', 'untranscribed']
 
 rule all:
     input:
-        expand(outDir + 'summed_matrices_matlab/{group}_mm_summed', group=GROUPS),
-        outDir + 'summed_matrices_matlab/total_mm_summed',
-        expand(outDir + 'SomaticSigs_out/{group}_pca_scree.png', group=GROUPS),
-        outDir + 'SomaticSigs_out/total_pca_scree.png'
+        ## expand(outDir + 'summed_matrices_matlab/{group}_mm_summed', group=GROUPS),
+        ## outDir + 'summed_matrices_matlab/total_mm_summed',
+        expand(outDir + 'summed_matrices/{group}_mm_summed_with_dinuc', group=GROUPS),
+        outDir + 'summed_matrices/total_mm_summed_with_dinuc',
+        expand(outDir + 'summed_matrices_matlab/{group}_mm_summed_with_dinuc', group=GROUPS),
+        outDir + 'summed_matrices_matlab/total_mm_summed_with_dinuc',
+        expand(outDir + 'SomaticSigs_out/{group}_nmf_scree.png', group=GROUPS),
+        outDir + 'SomaticSigs_out/total_nmf_scree.png',
+        expand(outDir + 'MutaGene_output/{sample}.mutagene.txt', sample=SAMPLES),
+        # expand(outDir + 'transcriptional_bias/vcf_parts/{trans}/{chrom}.vcf', trans=TRANSCRIBED, chrom=CHROMS),
+        # expand(outDir + 'transcriptional_bias/matrix_parts/{group}_mm_{chrom}_{trans}', trans=TRANSCRIBED, group=GROUPS, chrom=CHROMS)
+        expand(outDir + 'transcriptional_bias/summed_matrices/{trans}/{group}_mm_summed', group=GROUPS, trans=TRANSCRIBED),
+        expand(outDir + 'transcriptional_bias/summed_matrices_matlab/{trans}/{group}_mm_summed', group=GROUPS, trans=TRANSCRIBED)
 
-rule bgzip_input:
+rule bcf_header_fix:
+    '''
+    bcftools requires all fields to be defined (even though this isn't
+    a requirement in the VCF spec).  Add a definition to the header.
+    '''
     input:
         inFile
     output:
-        inFile + '.gz',
-        inFile + '.gz.tbi'
+        inFileNoExt + '.headerfix.vcf'
+    shell:
+        'sed \"s/^#CHROM/##INFO=<ID=.,Number=.,Type=String,Description=\\"Added for bcftools\\">\\n&/\" {input} > {output}'
+
+rule separate_sense_antisense:
+    '''
+    detect transcriptional strand bias
+    will need a chr and non-chr version of this
+
+    From Alexandrov et al,  Nature 2013
+    "Signatures of mutational processes in human cancer"
+
+    We re-extracted substitution mutational signatures incorporating the
+    transcriptional strand on which each mutation has taken place. Since a
+    mutation in a transcribed genomic region may be either on the transcribed
+    or the untranscribed strand, this generates a classification with 192
+    mutation subclasses. ... Strand bias catalogs were derived for each sample
+    using only substitutions identified in the transcribed regions of
+    well-annotated protein coding genes. Genomic regions of bidirectional
+    transcription were excluded from the strand bias analysis.
+    '''
+    input:
+        bed = execDir + 'ucsc_tables/transcribed_strand_info/hg19_{strand}_strand_no_chr.bed' if refGenome == 'hs37d5' else execDir + 'ucsc_tables/transcribed_strand_info/hg19_{strand}_strand.bed',
+        vcf = inFileNoExt + '.headerfix.vcf'
+    output:
+        outDir + 'transcriptional_bias/{strand}.vcf'
+    shell:
+        'module load bedtools;'
+        'bedtools intersect -a {input.vcf} -b {input.bed} -header -wa > {output}'
+
+rule separate_trans_untrans:
+    '''
+    Separate into "transcribed" and "untranscribed" SNVs based on whether
+    the pyrimidine is found on the transcribed strand (which is determined
+    by whether the gene is + or -; see previous rule).
+    '''
+    input:
+        outDir + 'transcriptional_bias/{strand}.vcf'
+    output:
+        outDir + 'transcriptional_bias/only_{strand}_{trans}.vcf'
+    params:
+        path = execDir + 'scripts/',
+        out1 = outDir + 'transcriptional_bias/only_{strand}_transcribed.vcf',
+        out2 = outDir + 'transcriptional_bias/only_{strand}_untranscribed.vcf'
+    shell:
+        'module load python3;'
+        'python3 {params.path}find_trans_untrans_vars.py {input} {params.out1} {params.out2}'
+
+rule bgzip_trans_untrans:
+    input:
+        outDir + 'transcriptional_bias/only_{strand}_{trans}.vcf'
+    output:
+        outDir + 'transcriptional_bias/only_{strand}_{trans}.vcf.gz',
+        outDir + 'transcriptional_bias/only_{strand}_{trans}.vcf.gz.tbi'
+    shell:
+        'module load tabix;'
+        'bgzip {input}; tabix -p vcf {input}.gz'
+
+rule combine_strand:
+    input:
+        expand(outDir + 'transcriptional_bias/only_{strand}_{{trans}}.vcf.gz', strand=STRANDS)
+    output:
+        outDir + 'transcriptional_bias/separated_vcfs/{trans}.vcf'
+    shell:
+        'module load bcftools;'
+        'bcftools concat -a {input} | bcftools sort -o {output}'
+
+rule bgzip_strand_input:
+    input:
+        outDir + 'transcriptional_bias/separated_vcfs/{trans}.vcf'
+    output:
+        outDir + 'transcriptional_bias/separated_vcfs/{trans}.vcf.gz',
+        outDir + 'transcriptional_bias/separated_vcfs/{trans}.vcf.gz.tbi'
+    shell:
+        'module load tabix;'
+        'bgzip {input}; tabix -p vcf {input}.gz'
+
+rule bgzip_input:
+    input:
+        inFileNoExt + '.headerfix.vcf'
+    output:
+        inFileNoExt + '.headerfix.vcf.gz',
+        inFileNoExt + '.headerfix.vcf.gz.tbi'
     shell:
         'module load tabix;'
         'bgzip {input}; tabix -p vcf {input}.gz'
 
 rule split_VCF_by_chrom:
     input:
-        i = inFile + '.gz',
-        index = inFile + '.gz.tbi'
+        i = inFileNoExt + '.headerfix.vcf.gz',
+        index = inFileNoExt + '.headerfix.vcf.gz.tbi'
     output:
         outDir + 'vcf_parts/{chrom}.vcf'
+    params:
+        chr = '{chrom}'
+    shell:
+        'module load tabix;'
+        'tabix -h {input.i} {params.chr} > {output}'
+
+rule split_strands_VCF_by_chrom:
+    input:
+        i = outDir + 'transcriptional_bias/separated_vcfs/{trans}.vcf.gz',
+        index = outDir + 'transcriptional_bias/separated_vcfs/{trans}.vcf.gz.tbi'
+    output:
+        outDir + 'transcriptional_bias/vcf_parts/{trans}/{chrom}.vcf'
     params:
         chr = '{chrom}'
     shell:
@@ -58,7 +174,7 @@ rule generate_R_config:
     output:
         outDir + 'matrix_parts/mutSigsConfig.r'
     params:
-        ref = config['part2']['myRef'],
+        ref = refGenome, #'hs37d5' if refGenome == 'hs37d5' else 'hg19',  #STR bed file from UCSC
         p = phenoFile,
         sCol = config['part2']['subjectCol'],
         pCol = config['part2']['phenoCol']
@@ -83,9 +199,31 @@ rule convert_to_matrices:
         'module load gcc/4.8.4 R/3.4.0;'
         'Rscript {params.path}mutSigsDataPrep2.r {input.i} {params.outPath}'
 
+rule copy_r_config:
+    input:
+        outDir + 'matrix_parts/mutSigsConfig.r'
+    output:
+        outDir + 'transcriptional_bias/matrix_parts/{trans}/mutSigsConfig.r'
+    shell:
+        'cp {input} {output}'
+
+rule convert_strands_to_matrices:
+    input:
+        i = outDir + 'transcriptional_bias/vcf_parts/{trans}/{chrom}.vcf',
+        c = outDir + 'transcriptional_bias/matrix_parts/{trans}/mutSigsConfig.r'
+    output:
+        o = outDir + 'transcriptional_bias/matrix_parts/{trans}/{group}_mm_{chrom}'
+    params:
+        path = execDir + 'VCF_to_matrix_scripts/',
+        outPath = outDir + 'transcriptional_bias/matrix_parts/{trans}/'
+    shell:
+        'module load gcc/4.8.4 R/3.4.0;'
+        'Rscript {params.path}mutSigsDataPrep2.r {input.i} {params.outPath}'
+
 rule sum_matrices_by_group:
     input:
-        expand(outDir + 'matrix_parts/{{group}}_mm_{chrom}', chrom=CHROMS)
+        expand(outDir + 'matrix_parts/{{group}}_mm_{chrom}', chrom=CHROMS),
+        outDir + 'matrix_parts/mutSigsConfig.r'
     output:
         outDir + 'summed_matrices/{group}_mm_summed'
     params:
@@ -95,6 +233,28 @@ rule sum_matrices_by_group:
     shell:
         'module load gcc/4.8.4 R/3.4.0;'
         'Rscript {params.path}mutSigsSumMatrices.r {params.inPath} {params.outPath}'
+
+rule sum_strand_matrices_by_group:
+    input:
+        expand(outDir + 'transcriptional_bias/matrix_parts/{{trans}}/{{group}}_mm_{chrom}', chrom=CHROMS),
+        outDir + 'transcriptional_bias/matrix_parts/{trans}/mutSigsConfig.r'
+    output:
+        outDir + 'transcriptional_bias/summed_matrices/{trans}/{group}_mm_summed'
+    params:
+        path = execDir + 'VCF_to_matrix_scripts/',
+        inPath = outDir + 'transcriptional_bias/matrix_parts/{trans}/',
+        outPath = outDir + 'transcriptional_bias/summed_matrices/{trans}/'
+    shell:
+        'module load gcc/4.8.4 R/3.4.0;'
+        'Rscript {params.path}mutSigsSumMatrices.r {params.inPath} {params.outPath}'
+
+rule convert_strand_matrices_to_matlab_format:
+    input:
+        outDir + 'transcriptional_bias/summed_matrices/{trans}/{group}_mm_summed'
+    output:
+        outDir + 'transcriptional_bias/summed_matrices_matlab/{trans}/{group}_mm_summed'
+    shell:
+        "awk '{{FS=OFS=\"\"}}NR>1{{out=$5\"[\"$2\">\"$3\"]\"$7; for(i=9;i<=NF;i++) {{out=out$i}}; print out}}' {input} | sort | cut -d' ' -f2- > {output}"
 
 rule prefix_subject_IDs:
     '''
@@ -122,6 +282,21 @@ rule sum_matrices_total:
     shell:
         "paste -d' ' {input} | sed '2,$s/ \".*\" / /g' > {output}"
 
+rule add_dinuc_counts:
+    '''
+    may want to make this script and the matlab version more generic, to use in adding various rows (indels)
+    '''
+    input:
+        matrix = outDir + 'summed_matrices/{group}_mm_summed',
+        counts = os.path.dirname(os.path.abspath(inFile)) + '/dinuc_counts.txt'
+    output:
+        outDir + 'summed_matrices/{group}_mm_summed_with_dinuc'
+    params:
+        path = execDir + 'scripts/'
+    shell:
+        'bash {params.path}add_dinuc_counts.sh {input.matrix} {input.counts} > {output}'
+        #'cat {input.matrix} <(cat \"dinuc\" <(grep -f <(head -n1 {input.matrix} | tr \"\t\" \"\n\") {input.counts} | cut -f2) | tr \"\n\" \"\t\") > {output}'
+
 rule convert_to_matlab_format:
     input:
         outDir + 'summed_matrices/{group}_mm_summed'#,
@@ -131,13 +306,62 @@ rule convert_to_matlab_format:
     shell:
         "awk '{{FS=OFS=\"\"}}NR>1{{out=$5\"[\"$2\">\"$3\"]\"$7; for(i=9;i<=NF;i++) {{out=out$i}}; print out}}' {input} | sort | cut -d' ' -f2- > {output}"
 
+rule add_dinuc_counts_to_matlab_format:
+    input:
+        matlab = outDir + 'summed_matrices_matlab/{group}_mm_summed',
+        matrix = outDir + 'summed_matrices/{group}_mm_summed'
+    output:
+        outDir + 'summed_matrices_matlab/{group}_mm_summed_with_dinuc'
+    params:
+        path = execDir + 'scripts/'
+    shell:
+        'bash {params.path}add_dinuc_counts_matlab.sh {input.matrix} {input.matlab} > {output}'
+        #'cat {input.matlab} <(tail -n1 {input.matrix} | cut -d\" \" -f2- ) > {output}'
+
 rule run_SomaticSigs_over_range:
     input:
         outDir + 'summed_matrices/{group}_mm_summed'
     output:
-        outDir + 'SomaticSigs_out/{group}_pca_scree.png'
+        outDir + 'SomaticSigs_out/{group}_nmf_scree.png'
     params:
         path = execDir + 'scripts/'
     shell:
         'module load gcc/4.8.4 R/3.4.0;'
         'Rscript {params.path}runSomaticSigsRange.r {input} {output}'
+
+rule split_filtered_vcf_for_MutaGene:
+    '''
+    Note the use of bcftools instead of cut.  Cut is slower, but
+    bcftools is much pickier.  This may result in an error if the
+    VCF header leaves any fields undefined (despite this being ok
+    according to VCF spec).
+    '''
+    input:
+        i = inFileNoExt + '.headerfix.vcf.gz',
+        index = inFileNoExt + '.headerfix.vcf.gz.tbi'
+    output:
+        outDir + 'individual_vcfs/{sample}.vcf'
+    shell:
+        'module load bcftools;'
+        'bcftools view -c1 -Ov -s {wildcards.sample} -o {output} {input.i}'
+
+rule run_MutaGene_for_each_individual:
+    '''
+    Run mutagene on each individual vcf via Alex's API.
+    '''
+    input:
+        expand(outDir + 'individual_vcfs/{sample}.vcf', sample=SAMPLES)
+    output:
+        expand(outDir + 'MutaGene_output/{sample}.mutagene.txt', sample=SAMPLES)
+    params:
+        #sampleList = SAMPLES,
+        path = execDir + 'scripts/',
+        #inPath = outDir + 'individual_vcfs/',
+        outPath = outDir + 'MutaGene_output/'
+    shell:
+        'module load python3;'
+        #'python3 {params.path}mutagene_api.py -l {params.sampleList} -i {params.inPath} -o {params.outPath}'
+        'python3 {params.path}mutagene_api.py -l {input} -o {params.outPath}'
+
+# rule make_some_sort_of_chart_for_above_result:
+

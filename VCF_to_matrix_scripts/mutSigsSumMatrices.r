@@ -19,6 +19,7 @@ sumOverGroups <- function(group, outPath) {
     file_list <- list.files(pattern=paste(group, "_mm_*", sep=""))  # list all matrices with the right group in the file name
     matrix_list <- lapply(file_list, readInMatrix)  # read in the matrices listed above
     summed_matrix <- Reduce("+", matrix_list)  # add the matrices read in above
+    summed_matrix <- summed_matrix[, colSums(abs(summed_matrix)) != 0]  # remove columns in which all rows sum to zero (instead of doing droplevels on subsetted vcf data, which can lead to discordantly-sized matrices)
     write.table(summed_matrix, file=paste(outPath, group, "_mm_summed", sep=""), row.names=TRUE, col.names=TRUE)
 }
 

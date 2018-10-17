@@ -15,19 +15,14 @@ outFile = args[2]
 
 #setwd(myPath)
 library(SomaticSignatures)
+library(ggplot2)
 library(tools)
 
 # load motif matrix into R
 mm <- as.matrix(read.table(inFile, header = TRUE, sep = " ", row.names = 1, as.is = TRUE))
 dim(mm)  # sanity check
-test_sigs <- 1:15  # consider making this a user-defined variable
-#test_nmf = assessNumberSignatures(mm, test_sigs, nReplicates = 5) 
-test_pca <- assessNumberSignatures(mm, test_sigs, pcaDecomposition)
-# png(paste(file_path_sans_ext(basename(inFile)), "_nmf_scree.png", sep="")
-# 	plotNumberSignatures(test_nmf)
-# dev.off()
-png(outFile)
-# png(paste(file_path_sans_ext(basename(inFile)), "_pca_scree.png", sep="")
-	plotNumberSignatures(test_pca)
-dev.off()
-
+test_sigs <- 2:15  # consider making this a user-defined variable
+# note that if test_sigs starts at 1, the nmf version will error out!
+test_nmf = assessNumberSignatures(mm, test_sigs, nReplicates = 5) 
+plotNumberSignatures(test_nmf)
+ggsave(filename=outFile, dpi=300)

@@ -31,3 +31,4 @@ rule find_signatures:
     shell:
         'module load gcc/4.8.4 R/3.4.0;'
         'Rscript {params.path}runSomaticSigs.r {params.n} {wildcards.group} {input} {params.outBase}'
+

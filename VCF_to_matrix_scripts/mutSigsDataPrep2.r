@@ -34,7 +34,7 @@ if (myRef == "hg19") {
 buildMotifMatrix <- function(groupName, vr_filtered, inFile, myRef) {
 	print(paste(groupName, "_mm_", file_path_sans_ext(basename(inFile)), sep=""))
 	vr_group <- vr_filtered[which(vr_filtered$cancerType==groupName)]								# separate into groups
-	sampleNames(vr_group) <- droplevels(sampleNames(vr_group))										# remove subjects that have no data in the group subset
+	#sampleNames(vr_group) <- droplevels(sampleNames(vr_group))										# remove subjects that have no data in the group subset
 		# note that if there's no data for a sample but the sample IS in the group, this may cause inconsistencies when adding matrices over a group
 	if (myRef == "hg19") {
 		group_motifs <- mutationContext(vr_group, BSgenome.Hsapiens.UCSC.hg19)						# retrieve somatic motifs from the reference sequence

@@ -1,5 +1,6 @@
 execDir: '/DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/pipeline/'
 logDir: '/DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/mutect/logs'  # no terminal slash
+refChr: no # yes or no - chr1 or 1?
 
 queue: 'xlong.q'
 numJobs: 50
@@ -13,7 +14,7 @@ part1:
 part2:
   inFile: '/DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/mutect/filtered/somatic_filtered.vcf'
   outDir: '/DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/pipeline_dev/mutect/analyze_all_samples/'
-  myRef: 'hs37d5' # or 'hg19'
+  #myRef: 'hs37d5' (no chr) # or 'hg19' (chr)
   phenoFile: '/DCEG/CGF/Bioinformatics/Production/Bari/Mut_sigs_EAGLE/repeat_analysis_lung_more_samples/eagle.pheno.149lungsamples'  # space delimited
   subjectCol: 'Collaborator_Sample_ID'
   phenoCol: 'Collection'
